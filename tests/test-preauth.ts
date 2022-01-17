@@ -1,11 +1,12 @@
 const anchor = require( '@project-serum/anchor');
-const {LAMPORTS_PER_SOL, PublicKey, SystemProgram, Connection, clusterApiUrl} = require('@solana/web3.js');
-const assert = require('assert');
+const {LAMPORTS_PER_SOL, PublicKey, AccountInfo, Keypair, SystemProgram, Connection, clusterApiUrl} = require('@solana/web3.js');
 const serumCmn = require("@project-serum/common");
 const TokenInstructions = require("@project-serum/serum").TokenInstructions;
+// import { token } from '@project-serum/anchor/dist/cjs/utils';
 import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, Token } from '@solana/spl-token';
+
+const assert = require('assert');
 import fs from 'mz/fs';
-import {AccountInfo, Keypair} from '@solana/web3.js';
 
 const {
   createMint,
@@ -13,40 +14,126 @@ const {
   getTokenAccount,
 } = require('./utils');
 
-// Read the generated IDL.
-const idl = JSON.parse(
-  require("fs").readFileSync("./target/idl/mymoneydapp.json", "utf8")
-);
 
-let merchantATA = null;
-let merchantAccount = null;
-let merchantBaseAccount = null;
 
 describe('test-preauth', () => {
 
+  // Read the generated IDL.
+  const idl = JSON.parse(
+    require("fs").readFileSync("./target/idl/mymoneydapp.json", "utf8")
+  );
+
+  // Globals
+  let merchantATA = null;
+  let merchantAccount = null;
+  let merchantBaseAccount = null;
+  let consumerATATokenAcct: TokenAccount = null;
+  let merchantATATokenAcct: TokenAccount = null;
+
+  // Setup provider
   const provider = anchor.Provider.env();
   anchor.setProvider(provider);
 
   // The token mint address
   const mint = new PublicKey("BriQC6NkjrYRSXpoUqoW8cWJtESrtwUufJbAoLMkkCme");
 
-  // The account representing the merchant
-  // This hardcode PK is for the Phantom Wallet named `Wallet7`
+  // The vault where the tokens are held
+  const vault = new PublicKey("mL7fT2kDHxhecEmQ25vSuFuy3LyuEuPFHmz5MaGsYB9");
+
+  // Address of the deployed program.
+  const programId = "3vyAh7j33TXxNsx4GFfpbJJihwrPkQ8dz6YrqyDcuJN1";
+
+  // The account representing the consumer
+  // This hardcode PK is for the Phantom Wallet named `Consumer`
   let consumerPK = new PublicKey("5svtgSJUtLyd4DTUNzRctx7sZSN8nsc5HjjkiwbugSUG");
   
+  // The account representing the merchant
+  // This hardcode PK is for the Phantom Wallet named `Merchant`
+  let merchantPK = new PublicKey("GSrFHZeDsTrSZtnusFEpG8xbBeiz4MScQHw6FvfAnGjw");
+
+  // Generate the program client from IDL.
+  const program = new anchor.Program(idl, programId);
+
+  it("Gets consumer derived token account", async () => {
+
+    console.log("Invoking getTokenAccountFromWalletPK for consumer wallet PK", consumerPK.toBase58());
+    consumerATATokenAcct = await getTokenAccountFromWalletPK(provider, consumerPK, mint);
+
+    if( consumerATATokenAcct != null) {
+      console.log(`consumer token account balance: ${consumerATATokenAcct.accountInfo.amount} ECK at ATA ${consumerATATokenAcct.publicKey.toBase58()}`);
+    }
+    else {
+      console.log("Could not load ATA for consumer walletPK", consumerPK.toBase58());
+    }
+  });
+
+  it("Gets merchant derived token account", async () => {
+
+    console.log("Invoking getTokenAccountFromWalletPK for merchant wallet PK", merchantPK.toBase58());
+    merchantATATokenAcct = await getTokenAccountFromWalletPK(provider, merchantPK, mint);
+
+    if( merchantATATokenAcct != null) {
+      console.log(`merchant token account balance: ${merchantATATokenAcct.accountInfo.amount} ECK at ATA ${merchantATATokenAcct.publicKey.toBase58()}`);
+    }
+    else {
+      console.log("Could not load ATA for merchant walletPK", consumerPK.toBase58());
+    }
+  });
+
+  it("Create consumer derived token account", async () => {
+
+    // Create consumer ATA if not already exists from above test
+    if( consumerATATokenAcct == null) {
+      consumerATATokenAcct = await createTokenAssociatedAccount(provider, consumerPK, mint); 
+
+      if( consumerATATokenAcct != null) {
+        console.log("Consumer ATA created at", consumerATATokenAcct.publicKey.toBase58());
+      }
+      else {
+        console.log("Error creating consumer ATA")
+      }
+    }
+
+    assert(consumerATATokenAcct != null);
+  });
+
+  it("Create merchant derived token account", async () => {
+
+    // Create merchant ATA if not already exists from above test
+    if( merchantATATokenAcct == null) {
+      merchantATATokenAcct = await createTokenAssociatedAccount(provider, merchantPK, mint); 
+    }
+
+    assert(merchantATATokenAcct != null);
+  });
+
+  it("Funds consumer account", async () => {
+   
+    console.log("Transferring from", vault.toBase58(), "to", consumerATATokenAcct.publicKey.toBase58());
+    await program.rpc.proxyTransfer(new anchor.BN(1), {
+      accounts: {
+        authority: provider.wallet.publicKey,
+        to: consumerATATokenAcct.publicKey,
+        from: vault,
+        tokenProgram: TokenInstructions.TOKEN_PROGRAM_ID,
+      },
+    });
+    console.log("Transfer is complete")
+  });
+
   it("Invokes preauth()", async () => {
 
     console.log("Invoking preauth");
   
     try {
-      const consumerAta = await preauth(1, provider, consumerPK, mint);
-      console.log("Preauth successful, ATA is", consumerAta.toBase58());
+      const consumerAta = await preauth(1 /*amount*/, provider, consumerPK, mint);
+      console.log("Preauth successful, ATA is", consumerAta);
     } catch (error) {
       console.log("Error invoking preauth()", error)
     }
-    
   });
 
+  /*
   it("Retrieves consumer base account", async () => {
 
     console.log("Getting consumer base account for", consumerPK.toBase58());
@@ -92,11 +179,59 @@ describe('test-preauth', () => {
 
     }
   });
+  */
 });
+
+//
+// Structures
+//
+export class TokenAccount {
+  public publicKey: PublicKey;
+  public accountInfo: AccountInfo<any>;
+}
 
 //
 // Functions
 //
+
+// Returns TokenAccount for the ATA of supplied walletPK
+// Return value is null if not found
+export async function getTokenAccountFromWalletPK(provider, walletPK, mintPK 
+  ) : Promise<TokenAccount> {
+
+    // Return value
+    let tokenAcct = null;
+
+    try {
+      // 1. Generate address of derived token account for specified walletPK
+      // console.log("Attempting to derive ATA for base address", walletPK.toBase58());
+      const walletATA = await Token.getAssociatedTokenAddress(
+        ASSOCIATED_TOKEN_PROGRAM_ID, // always ASSOCIATED_TOKEN_PROGRAM_ID
+        TOKEN_PROGRAM_ID, // always TOKEN_PROGRAM_ID
+        mintPK, // mint
+        walletPK // owner
+      );
+      // console.log("Got ATA", walletPK.toBase58(), "for base address", walletPK.toBase58());
+
+      // 2. Attempt to fetch token derived account for walletPK
+      // Throws exception if specified token account not found
+      // console.log("Fetching token ATA account at", walletATA.toBase58());
+      const ataAccount = await getTokenAccount(provider, walletATA);
+      // console.log(`ATA account balance: ${ataAccount.amount} for account ${walletATA}`);
+
+      // 3. Load up a custom TokenAccount structure and return it
+      tokenAcct = new TokenAccount();
+      tokenAcct.accountInfo = ataAccount;
+      tokenAcct.publicKey = walletATA;
+    }
+    catch(error) {
+      console.log("Error in getTokenAccountFromWalletPK", error)
+    }
+   
+    return tokenAcct;
+  }
+
+
 export async function preauth(amount, provider, consumerPK, mintPK 
   ) : Promise<string> {
 
@@ -146,10 +281,14 @@ export async function preauth(amount, provider, consumerPK, mintPK
 }
 
 export async function createTokenAssociatedAccount(provider, publicKey, mintPK 
-  ) : Promise<any> {
+  ) : Promise<TokenAccount> {
 
   //Load Keypair of local wallet as signer (TODO JTE ??????)
   const kpSigner = await createKeypairFromFile('/Users/teck/.config/solana/id.json');
+  console.log("Warning: function createTokenAssociatedAccount is using local Wallet to sign");
+
+  // Return value
+  let tokenAcct: TokenAccount = null;
 
   try {
 
@@ -161,12 +300,27 @@ export async function createTokenAssociatedAccount(provider, publicKey, mintPK
     );
   
     // !!!! Implicit RETURN <------------------!
-    await mintToken.getOrCreateAssociatedAccountInfo(
+    const newAcctInfo: AccountInfo<any> = await mintToken.getOrCreateAssociatedAccountInfo(
       publicKey
     );
+
+    const ata = await Token.getAssociatedTokenAddress(
+      ASSOCIATED_TOKEN_PROGRAM_ID, // always ASSOCIATED_TOKEN_PROGRAM_ID
+      TOKEN_PROGRAM_ID, // always TOKEN_PROGRAM_ID
+      mintPK, // mint
+      publicKey // owner
+    );
+
+    // Load up return value
+    tokenAcct = new TokenAccount();
+    tokenAcct.accountInfo = newAcctInfo;
+    tokenAcct.publicKey = ata;
+
   } catch (error) {
     console.log("Error", error)
   }
+
+  return tokenAcct;
 }
 
 /**
@@ -179,52 +333,3 @@ export async function createTokenAssociatedAccount(provider, publicKey, mintPK
   const secretKey = Uint8Array.from(JSON.parse(secretKeyString));
   return Keypair.fromSecretKey(secretKey);
 }
-
-
-
-
-
-
-/*
-async function myCreateTokenAccount(provider, newPubKey, fromPubkey, mint, owner, signer) {
-  // const LAMPORTS = 100000000; // TODO determine this in a better way
-  // const vault = anchor.web3.Keypair.generate();
-  const tx = new anchor.web3.Transaction();
-  tx.add(
-    ...(await myCreateTokenAccountInstrs(provider, newPubKey, fromPubkey, mint, owner, undefined))
-  );
-  console.log("About to create account for:", newPubKey.toBase58());
-  const resp = await provider.send(tx, [newPubKey]);
-  console.log("Got response to createAccount:", resp);
-}
-
-async function myCreateTokenAccountInstrs(
-  provider,
-  newAccountPubkey,
-  fromPubkey,
-  mint,
-  owner,
-  lamports
-) {
-  const space = 165;
-  if (lamports === undefined) {
-    // JTE TODO the `size` param shouldn't be hardcoded below
-    lamports = await provider.connection.getMinimumBalanceForRentExemption(space);
-  }
-  return [
-    anchor.web3.SystemProgram.createAccount({
-      fromPubkey: fromPubkey, //provider.wallet.publicKey,
-      newAccountPubkey,
-      space: space,
-      lamports,
-      programId: TOKEN_PROGRAM_ID,
-    }),
-    TokenInstructions.initializeAccount({
-      account: newAccountPubkey,
-      mint,
-      owner,
-    }),
-  ];
-}
-*/
-
