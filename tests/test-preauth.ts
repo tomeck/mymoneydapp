@@ -1,4 +1,3 @@
-
 const anchor = require( '@project-serum/anchor');
 const {LAMPORTS_PER_SOL, PublicKey, SystemProgram, Connection, clusterApiUrl} = require('@solana/web3.js');
 const assert = require('assert');
@@ -6,7 +5,7 @@ const serumCmn = require("@project-serum/common");
 const TokenInstructions = require("@project-serum/serum").TokenInstructions;
 import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, Token } from '@solana/spl-token';
 import fs from 'mz/fs';
-import {Keypair} from '@solana/web3.js';
+import {AccountInfo, Keypair} from '@solana/web3.js';
 
 const {
   createMint,
@@ -19,7 +18,6 @@ const idl = JSON.parse(
   require("fs").readFileSync("./target/idl/mymoneydapp.json", "utf8")
 );
 
-
 let merchantATA = null;
 let merchantAccount = null;
 let merchantBaseAccount = null;
@@ -29,22 +27,12 @@ describe('test-preauth', () => {
   const provider = anchor.Provider.env();
   anchor.setProvider(provider);
 
-  // Address of the deployed program.
-  const programId = "3vyAh7j33TXxNsx4GFfpbJJihwrPkQ8dz6YrqyDcuJN1";
-
   // The token mint address
   const mint = new PublicKey("BriQC6NkjrYRSXpoUqoW8cWJtESrtwUufJbAoLMkkCme");
 
   // The account representing the merchant
-  // This hardcode PK is for the Phantom Wallet named `BuyerV2`
-  let merchant = new PublicKey("5rhu31NibGKvgiGZkNxJgkDZdE8eACJozrDk8mGtiPEM");
-  
-  // The vault where the tokens are held
-  const vault = new PublicKey("mL7fT2kDHxhecEmQ25vSuFuy3LyuEuPFHmz5MaGsYB9");
-
-  // Generate the program client from IDL.
-  // const program = new anchor.Program(idl, programId);
-
+  // This hardcode PK is for the Phantom Wallet named `Wallet7`
+  let merchant = new PublicKey("5svtgSJUtLyd4DTUNzRctx7sZSN8nsc5HjjkiwbugSUG");
   
   it("Retrieves merchant base account", async () => {
 
@@ -73,28 +61,28 @@ describe('test-preauth', () => {
     
     // Validate that the tokens are there
     try {
-      // Throws exception if specified tolen account not fouund
+      // Throws exception if specified token account not fouund
       const ataAccount = await getTokenAccount(provider, merchantATA);
       console.log(`ATA account balance: ${ataAccount.amount} for account ${merchantATA}`);
 
     } catch (error) {
 
-      console.log("Merchant account not found", merchantATA.toBase58());
+      console.log("Merchant account not found, creating token account for", merchantATA.toBase58());
       
-      createTokenAssociatedAccount(provider,merchant, mint);
+      const newTokenAccount = await createTokenAssociatedAccount(provider,merchant, mint);
 
-
+      console.log("New account created with owner", newTokenAccount.owner.toBase58())
     }
   });
 });
 
-export async function createTokenAssociatedAccount(provider, publicKey, mintPK ) {
+export async function createTokenAssociatedAccount(provider, publicKey, mintPK 
+  ) : Promise<any> {
 
   //Load Keypair of local wallet as signer (TODO JTE ??????)
   const kpSigner = await createKeypairFromFile('/Users/teck/.config/solana/id.json');
 
   try {
-    // const PK = new PublicKey(publicKey);
 
     const mintToken = new Token(
       provider.connection,
@@ -103,25 +91,26 @@ export async function createTokenAssociatedAccount(provider, publicKey, mintPK )
       kpSigner 
     );
   
-    const fromTokenAccount = await mintToken.getOrCreateAssociatedAccountInfo(
+    const newTokenAccount = await mintToken.getOrCreateAssociatedAccountInfo(
       publicKey
     );
   
-    console.log(`New account balance: ${fromTokenAccount.amount} for public key ${publicKey.toBase58()}`);
- 
+    console.log(`New account balance: ${newTokenAccount.amount} for public key ${publicKey.toBase58()}`);
+    return newTokenAccount;
   } catch (error) {
     console.log("Error", error)
   }
+}
 
-
-  /*
-      //Load Keypair of local wallet as signer (TODO JTE ??????)
-      const kp = await createKeypairFromFile('/Users/teck/.config/solana/id.json');
-
-      await myCreateTokenAccount(provider, merchantATA, merchant, mint, merchant, kp);
-      merchantAccount = await getTokenAccount(provider, merchantATA);
-      console.log(`Merchant account balance: ${merchantAccount.amount}`);
-  */
+/**
+ * Create a Keypair from a secret key stored in file as bytes' array
+ */
+ async function createKeypairFromFile(
+  filePath: string,
+): Promise<Keypair> {
+  const secretKeyString = await fs.readFile(filePath, {encoding: 'utf8'});
+  const secretKey = Uint8Array.from(JSON.parse(secretKeyString));
+  return Keypair.fromSecretKey(secretKey);
 }
 
 
@@ -129,10 +118,7 @@ export async function createTokenAssociatedAccount(provider, publicKey, mintPK )
 
 
 
-
-
-
-
+/*
 async function myCreateTokenAccount(provider, newPubKey, fromPubkey, mint, owner, signer) {
   // const LAMPORTS = 100000000; // TODO determine this in a better way
   // const vault = anchor.web3.Keypair.generate();
@@ -173,14 +159,5 @@ async function myCreateTokenAccountInstrs(
     }),
   ];
 }
+*/
 
-/**
- * Create a Keypair from a secret key stored in file as bytes' array
- */
- async function createKeypairFromFile(
-  filePath: string,
-): Promise<Keypair> {
-  const secretKeyString = await fs.readFile(filePath, {encoding: 'utf8'});
-  const secretKey = Uint8Array.from(JSON.parse(secretKeyString));
-  return Keypair.fromSecretKey(secretKey);
-}
