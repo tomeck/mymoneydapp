@@ -34,7 +34,7 @@ describe('test-3', () => {
 
   // let recipient = provider.wallet.publicKey;
   let recipient = new PublicKey("86RktQHEp34vbgpj5LnDzctzZurKTAhfJae94c8vLThY");
-  let recipientTokenAccount = new PublicKey("9LDBhquMyvh6R2HG5fXg4wHFseCVcv7LgFB6HR36rA5Y");
+  let recipientTokenAccount = new PublicKey("FEwV9yzLChYKLV4QdHyGZReKAyiU5Xbc1UyCGWMB1rhQ");
  
 
   it("Creates a PDA token account", async () => {

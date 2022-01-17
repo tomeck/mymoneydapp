@@ -32,30 +32,43 @@ describe('test-preauth', () => {
 
   // The account representing the merchant
   // This hardcode PK is for the Phantom Wallet named `Wallet7`
-  let merchant = new PublicKey("5svtgSJUtLyd4DTUNzRctx7sZSN8nsc5HjjkiwbugSUG");
+  let consumerPK = new PublicKey("5svtgSJUtLyd4DTUNzRctx7sZSN8nsc5HjjkiwbugSUG");
   
-  it("Retrieves merchant base account", async () => {
+  it("Invokes preauth()", async () => {
 
-    console.log("Getting merchant base account for", merchant.toBase58());
+    console.log("Invoking preauth");
   
-    merchantBaseAccount = await provider.connection.getAccountInfo(merchant);
+    try {
+      const consumerAta = await preauth(1, provider, consumerPK, mint);
+      console.log("Preauth successful, ATA is", consumerAta.toBase58());
+    } catch (error) {
+      console.log("Error invoking preauth()", error)
+    }
+    
+  });
+
+  it("Retrieves consumer base account", async () => {
+
+    console.log("Getting consumer base account for", consumerPK.toBase58());
+  
+    merchantBaseAccount = await provider.connection.getAccountInfo(consumerPK);
     assert(merchantBaseAccount != null);
 
-    console.log(`Merchant account balance: ${merchantBaseAccount.lamports/LAMPORTS_PER_SOL} SOL`);
+    console.log(`consumer account balance: ${merchantBaseAccount.lamports/LAMPORTS_PER_SOL} SOL`);
   });
 
   it("Checks balance for ATA", async () => {
 
-    console.log("Deriving ATA for merchant", merchant.toBase58());
+    console.log("Deriving ATA for consumer", consumerPK.toBase58());
   
     // calculate ATA
     merchantATA = await Token.getAssociatedTokenAddress(
       ASSOCIATED_TOKEN_PROGRAM_ID, // always ASSOCIATED_TOKEN_PROGRAM_ID
       TOKEN_PROGRAM_ID, // always TOKEN_PROGRAM_ID
       mint, // mint
-      merchant // owner
+      consumerPK // owner
     );
-    console.log(`Got ATA for merchant: ${merchantATA.toBase58()}`);
+    console.log(`Got ATA for consumer: ${merchantATA.toBase58()}`);
     // Returns "2cBgknSvSgcYu1bLXFE1qfaPTtDEycS4vLMp6TUChHP7" for account associated
     // with Phantom wallet 'RecipientWallet'
     
@@ -69,12 +82,68 @@ describe('test-preauth', () => {
 
       console.log("Merchant account not found, creating token account for", merchantATA.toBase58());
       
-      const newTokenAccount = await createTokenAssociatedAccount(provider,merchant, mint);
+      try {
+        const newTokenAccount = await createTokenAssociatedAccount(provider, consumerPK, mint);
+        console.log("New account created with owner", newTokenAccount.owner.toBase58())
 
-      console.log("New account created with owner", newTokenAccount.owner.toBase58())
+      } catch (innerError) {
+        console.log("Error creating token account", innerError);
+      }
+
     }
   });
 });
+
+//
+// Functions
+//
+export async function preauth(amount, provider, consumerPK, mintPK 
+  ) : Promise<string> {
+
+    let consumerATA = null;
+    let ataAccount = null;
+
+    try {
+      // 1. Generate address of derived token account for specified PK
+      console.log("Attempting to derive ATA for base address", consumerPK.toBase58());
+      consumerATA = await Token.getAssociatedTokenAddress(
+        ASSOCIATED_TOKEN_PROGRAM_ID, // always ASSOCIATED_TOKEN_PROGRAM_ID
+        TOKEN_PROGRAM_ID, // always TOKEN_PROGRAM_ID
+        mintPK, // mint
+        consumerPK // owner
+      );
+      console.log("Got ATA", consumerATA.toBase58(), "for base address", consumerPK.toBase58());
+
+      // 2. Attempt to fetch token derived account for consumerPK
+      // Throws exception if specified token account not found
+      console.log("Fetching token ATA account at", consumerATA.toBase58());
+      ataAccount = await getTokenAccount(provider, consumerATA);
+      console.log(`ATA account balance: ${ataAccount.amount} for account ${consumerATA}`);
+
+    } catch (error) {
+
+      console.log("Consumer token account not found, creating token account for", consumerATA.toBase58());
+      
+      try {
+
+        // 3. (optional) Create token associated account since doesn't exist
+        ataAccount = await createTokenAssociatedAccount(provider, consumerPK, mintPK);
+        console.log("New account created with owner", ataAccount.owner.toBase58())
+      } catch (innerError) {
+        console.log("Error creating token account", innerError);
+        throw innerError;  // rethrow error
+      }
+    }
+
+    // If we get here, either the token account existed or we just created it
+
+    // 4. Check that account has sufficient funds for preauth
+    if( ataAccount.balance < amount) {
+      throw new Error("Insufficient balance for transaction");
+    }
+
+    return consumerATA;
+}
 
 export async function createTokenAssociatedAccount(provider, publicKey, mintPK 
   ) : Promise<any> {
@@ -91,12 +160,10 @@ export async function createTokenAssociatedAccount(provider, publicKey, mintPK
       kpSigner 
     );
   
-    const newTokenAccount = await mintToken.getOrCreateAssociatedAccountInfo(
+    // !!!! Implicit RETURN <------------------!
+    await mintToken.getOrCreateAssociatedAccountInfo(
       publicKey
     );
-  
-    console.log(`New account balance: ${newTokenAccount.amount} for public key ${publicKey.toBase58()}`);
-    return newTokenAccount;
   } catch (error) {
     console.log("Error", error)
   }
