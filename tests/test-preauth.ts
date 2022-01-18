@@ -1,9 +1,11 @@
 const anchor = require( '@project-serum/anchor');
-const {LAMPORTS_PER_SOL, PublicKey, AccountInfo, Keypair, SystemProgram, Connection, clusterApiUrl} = require('@solana/web3.js');
+const {LAMPORTS_PER_SOL, PublicKey, AccountInfo, Keypair, Transaction, SystemProgram, Connection, clusterApiUrl} = require('@solana/web3.js');
 const serumCmn = require("@project-serum/common");
 const TokenInstructions = require("@project-serum/serum").TokenInstructions;
+import { closeAccount } from '@project-serum/serum/lib/token-instructions';
 // import { token } from '@project-serum/anchor/dist/cjs/utils';
 import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, Token } from '@solana/spl-token';
+//import { PublicKey } from '@solana/web3.js';
 
 const assert = require('assert');
 import fs from 'mz/fs';
@@ -24,9 +26,11 @@ describe('test-preauth', () => {
   );
 
   // Globals
-  let merchantATA = null;
-  let merchantAccount = null;
-  let merchantBaseAccount = null;
+  // let merchantATA = null;
+  // let merchantAccount = null;
+  // let merchantBaseAccount = null;
+
+  let depositAcctPK = null
   let consumerATATokenAcct: TokenAccount = null;
   let merchantATATokenAcct: TokenAccount = null;
 
@@ -121,65 +125,65 @@ describe('test-preauth', () => {
     console.log("Transfer is complete")
   });
 
+
+  it("Creates deposit account for receiving payment", async () => {
+
+    console.log("Creating deposit account for receiving payment preauth");
+  
+    try {
+
+      depositAcctPK = await createTokenAccount(provider, mint, provider.wallet.publicKey);
+ 
+      console.log("Created deposit account at", depositAcctPK.toBase58());
+    } catch (error) {
+      console.log("Error creating deposit account", error)
+    }
+  });
+
+  it("Transfers tokens from deposit account to merchant master account", async () => {
+
+    
+    try {
+
+      // Fetch deposit account so can get its balance
+      console.log("Getting deposit account at", depositAcctPK.toBase58());
+      const depositAcct = await getTokenAccount(provider, depositAcctPK);
+      const tokenBalance = depositAcct.amount;
+      console.log("Got account, token balance is", tokenBalance)
+
+      console.log("Transferring all", tokenBalance, " tokens from", depositAcctPK.toBase58(), "to", merchantATATokenAcct.publicKey.toBase58());
+      // Transfer all tokens from the deposit account
+      await program.rpc.proxyTransfer(new anchor.BN(tokenBalance), {
+        accounts: {
+          authority: provider.wallet.publicKey,
+          to: merchantATATokenAcct.publicKey,
+          from: depositAcctPK,
+          tokenProgram: TokenInstructions.TOKEN_PROGRAM_ID,
+        },
+      });
+      console.log("Transfer is complete")
+
+      // Close the deposit account
+      const resp = await closeTokenAccount(provider, depositAcctPK);
+      console.log("Account closed with response", resp)
+
+    } catch (error) {
+      console.log("Error transferring tokens from deposit account to merchant master account", error)
+    }
+  });
+
   it("Invokes preauth()", async () => {
 
     console.log("Invoking preauth");
   
+    // amount, provider, consumerPK, merchantPK, mintPK
     try {
-      const consumerAta = await preauth(1 /*amount*/, provider, consumerPK, mint);
-      console.log("Preauth successful, ATA is", consumerAta);
+      const consumerAta: PublicKey = await preauth(1 /*amount*/, provider, consumerPK, merchantPK, mint);
+      console.log("Preauth successful, ATA is", consumerAta.toBase58());
     } catch (error) {
       console.log("Error invoking preauth()", error)
     }
   });
-
-  /*
-  it("Retrieves consumer base account", async () => {
-
-    console.log("Getting consumer base account for", consumerPK.toBase58());
-  
-    merchantBaseAccount = await provider.connection.getAccountInfo(consumerPK);
-    assert(merchantBaseAccount != null);
-
-    console.log(`consumer account balance: ${merchantBaseAccount.lamports/LAMPORTS_PER_SOL} SOL`);
-  });
-
-  it("Checks balance for ATA", async () => {
-
-    console.log("Deriving ATA for consumer", consumerPK.toBase58());
-  
-    // calculate ATA
-    merchantATA = await Token.getAssociatedTokenAddress(
-      ASSOCIATED_TOKEN_PROGRAM_ID, // always ASSOCIATED_TOKEN_PROGRAM_ID
-      TOKEN_PROGRAM_ID, // always TOKEN_PROGRAM_ID
-      mint, // mint
-      consumerPK // owner
-    );
-    console.log(`Got ATA for consumer: ${merchantATA.toBase58()}`);
-    // Returns "2cBgknSvSgcYu1bLXFE1qfaPTtDEycS4vLMp6TUChHP7" for account associated
-    // with Phantom wallet 'RecipientWallet'
-    
-    // Validate that the tokens are there
-    try {
-      // Throws exception if specified token account not fouund
-      const ataAccount = await getTokenAccount(provider, merchantATA);
-      console.log(`ATA account balance: ${ataAccount.amount} for account ${merchantATA}`);
-
-    } catch (error) {
-
-      console.log("Merchant account not found, creating token account for", merchantATA.toBase58());
-      
-      try {
-        const newTokenAccount = await createTokenAssociatedAccount(provider, consumerPK, mint);
-        console.log("New account created with owner", newTokenAccount.owner.toBase58())
-
-      } catch (innerError) {
-        console.log("Error creating token account", innerError);
-      }
-
-    }
-  });
-  */
 });
 
 //
@@ -193,6 +197,29 @@ export class TokenAccount {
 //
 // Functions
 //
+
+// Close the specified token account
+export async function closeTokenAccount(provider, closingAcctPK) {
+
+  console.log("Closing token account", closingAcctPK.toBase58());
+
+  let tx = new Transaction();
+  tx.add(
+    Token.createCloseAccountInstruction(
+      new PublicKey(TOKEN_PROGRAM_ID), // fixed
+      new PublicKey(closingAcctPK), // to be closed token account
+      new PublicKey(provider.wallet.publicKey), // rent's destination
+      new PublicKey(provider.wallet.publicKey), // account owner
+      [] // multisig
+    )
+  );
+  tx.feePayer = provider.wallet.publicKey;
+
+  const sig = await provider.connection.sendTransaction(tx, [provider.wallet.payer]);
+
+  console.log("Closed token account", closingAcctPK.toBase58(), "signature is", sig);
+}
+
 
 // Returns TokenAccount for the ATA of supplied walletPK
 // Return value is null if not found
@@ -232,13 +259,32 @@ export async function getTokenAccountFromWalletPK(provider, walletPK, mintPK
   }
 
 
-export async function preauth(amount, provider, consumerPK, mintPK 
-  ) : Promise<string> {
+export async function preauth(amount, provider, consumerPK, merchantPK, mintPK
+  ) : Promise<PublicKey> {
 
-    let consumerATA = null;
-    let ataAccount = null;
+    // 1. Get token account for consumer
+    const lConsumerATATokenAcct: TokenAccount = await getTokenAccountFromWalletPK(provider, consumerPK, mintPK);
 
-    try {
+    if( lConsumerATATokenAcct == null ) {
+      throw Error("Cannot locate consumer token account for consumerPK " + consumerPK.toBase58());
+    }
+
+    // 2. Check that consumer has sufficient funds for transaction
+    if( lConsumerATATokenAcct.accountInfo.amount < amount ) {
+      throw Error("Consumer has insufficient funds for this transaction");
+    }
+
+    // 3. Get token account for merchant
+    const lMerchantATATokenAcct: TokenAccount = await getTokenAccountFromWalletPK(provider, merchantPK, mintPK);
+
+    if( lMerchantATATokenAcct == null ) {
+      throw Error("Cannot located merchant token account for merchantPK " + merchantPK.toBase58());
+    }
+
+    // 4. return address to which consumer should transfer coin(s)
+    return lMerchantATATokenAcct.publicKey;
+
+      /*
       // 1. Generate address of derived token account for specified PK
       console.log("Attempting to derive ATA for base address", consumerPK.toBase58());
       consumerATA = await Token.getAssociatedTokenAddress(
@@ -254,9 +300,10 @@ export async function preauth(amount, provider, consumerPK, mintPK
       console.log("Fetching token ATA account at", consumerATA.toBase58());
       ataAccount = await getTokenAccount(provider, consumerATA);
       console.log(`ATA account balance: ${ataAccount.amount} for account ${consumerATA}`);
-
+      
     } catch (error) {
 
+      /*
       console.log("Consumer token account not found, creating token account for", consumerATA.toBase58());
       
       try {
@@ -278,6 +325,7 @@ export async function preauth(amount, provider, consumerPK, mintPK
     }
 
     return consumerATA;
+    */
 }
 
 export async function createTokenAssociatedAccount(provider, publicKey, mintPK 

@@ -51,8 +51,9 @@ describe('mint-test', () => {
   });
 
   it("Mints a token", async () => {
+    const numTokens = 1000000;
     // Mint 1000 of our tokens to our FROM account
-    let signature = await program.rpc.proxyMintTo(new anchor.BN(1000), {
+    let signature = await program.rpc.proxyMintTo(new anchor.BN(numTokens), {
       accounts: {
         authority: provider.wallet.publicKey,
         mint,
@@ -61,12 +62,12 @@ describe('mint-test', () => {
       },
     });
 
-    console.log("Minting transaction signature", signature);
+    console.log("Minting mint", mint.toBase58());
     
     // Validate that the tokens are there
     const fromAccount = await getTokenAccount(provider, from);
 
-    assert.ok(fromAccount.amount.eq(new anchor.BN(1000)));
+    assert.ok(fromAccount.amount.eq(new anchor.BN(numTokens)));
   });
 
 });

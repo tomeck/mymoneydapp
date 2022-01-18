@@ -57,11 +57,10 @@ const TOKEN_PROGRAM_ID = new anchor.web3.PublicKey(
   }
   
   export async function createTokenAccount(provider, mint, owner) {
-    const LAMPORTS = 100000000; // TODO determine this in a better way
     const vault = anchor.web3.Keypair.generate();
     const tx = new anchor.web3.Transaction();
     tx.add(
-      ...(await createTokenAccountInstrs(provider, vault.publicKey, mint, owner, LAMPORTS))
+      ...(await createTokenAccountInstrs(provider, vault.publicKey, mint, owner, undefined))
     );
     await provider.send(tx, [vault]);
     return vault.publicKey;
@@ -74,14 +73,16 @@ const TOKEN_PROGRAM_ID = new anchor.web3.PublicKey(
     owner,
     lamports
   ) {
+    // JTE TODO need to remove this hardcoding
+    const SIZE = 165;
     if (lamports === undefined) {
-      lamports = await provider.connection.getMinimumBalanceForRentExemption(165);
+      lamports = await provider.connection.getMinimumBalanceForRentExemption(SIZE);
     }
     return [
       anchor.web3.SystemProgram.createAccount({
         fromPubkey: provider.wallet.publicKey,
         newAccountPubkey,
-        space: 165,
+        space: SIZE,
         lamports,
         programId: TOKEN_PROGRAM_ID,
       }),
